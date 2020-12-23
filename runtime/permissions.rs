@@ -580,11 +580,13 @@ impl Permissions {
     specifier: &ModuleSpecifier,
   ) -> Result<(), AnyError> {
     let url = specifier.as_url();
-    if url.scheme() == "file" {
-      let path = url.to_file_path().unwrap();
-      self.check_read(&path)
-    } else {
-      self.check_net_url(url)
+    match url.scheme() {
+      "file" => {
+        let path = url.to_file_path().unwrap();
+        self.check_read(&path)
+      }
+      "data" => Ok(()),
+      _ => self.check_net_url(url),
     }
   }
 
@@ -914,6 +916,13 @@ mod tests {
         ModuleSpecifier::resolve_url_or_path("http://deno.land/x/mod.ts")
           .unwrap(),
         false,
+      ),
+      (
+        ModuleSpecifier::resolve_url_or_path(
+          "data:text/plain,Hello%2C%20Deno!",
+        )
+        .unwrap(),
+        true,
       ),
     ];
 
