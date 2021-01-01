@@ -470,7 +470,7 @@ async fn eval_command(
   .into_bytes();
 
   let file = File {
-    local: main_module_url.to_file_path().unwrap(),
+    maybe_local: Some(main_module_url.to_file_path().unwrap()),
     maybe_types: None,
     media_type: if as_typescript {
       MediaType::TypeScript
@@ -824,7 +824,7 @@ async fn run_from_stdin(flags: Flags) -> Result<(), AnyError> {
   let main_module_url = main_module.as_url().to_owned();
   // Create a dummy source file.
   let source_file = File {
-    local: main_module_url.to_file_path().unwrap(),
+    maybe_local: Some(main_module_url.to_file_path().unwrap()),
     maybe_types: None,
     media_type: MediaType::TypeScript,
     source: String::from_utf8(source)?,
@@ -984,7 +984,7 @@ async fn test_command(
   let main_module = ModuleSpecifier::resolve_path("$deno$test.ts")?;
   // Create a dummy source file.
   let source_file = File {
-    local: main_module.as_url().to_file_path().unwrap(),
+    maybe_local: Some(main_module.as_url().to_file_path().unwrap()),
     maybe_types: None,
     media_type: MediaType::TypeScript,
     source: tools::test_runner::render_test_file(

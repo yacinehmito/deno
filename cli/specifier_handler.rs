@@ -347,6 +347,10 @@ impl SpecifierHandler for FetchHandler {
             Some((disk_cache.location.join(emit_path), maybe_map_path));
         }
       };
+      let mut source_path = PathBuf::new();
+      if let Some(local) = source_file.maybe_local {
+        source_path = local;
+      }
 
       Ok(CachedModule {
         is_remote,
@@ -358,7 +362,7 @@ impl SpecifierHandler for FetchHandler {
         media_type: source_file.media_type,
         requested_specifier,
         source: source_file.source,
-        source_path: source_file.local,
+        source_path,
         specifier: source_file.specifier,
       })
     }

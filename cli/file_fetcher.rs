@@ -62,7 +62,7 @@ pub struct File {
   /// The path to the local version of the source file.  For local files this
   /// will be the direct path to that file.  For remote files, it will be the
   /// path to the file in the HTTP cache.
-  pub local: PathBuf,
+  pub maybe_local: Option<PathBuf>,
   /// For remote files, if there was an `X-TypeScript-Type` header, the parsed
   /// out value of that header.
   pub maybe_types: Option<String>,
@@ -149,7 +149,7 @@ fn fetch_local(specifier: &ModuleSpecifier) -> Result<File, AnyError> {
   let media_type = MediaType::from(specifier);
 
   Ok(File {
-    local,
+    maybe_local: Some(local),
     maybe_types: None,
     media_type,
     source,
@@ -336,7 +336,7 @@ impl FileFetcher {
     let maybe_types = headers.get("x-typescript-types").cloned();
 
     Ok(File {
-      local,
+      maybe_local: Some(local),
       maybe_types,
       media_type,
       source,
@@ -812,7 +812,7 @@ mod tests {
       ModuleSpecifier::resolve_url_or_path(local.as_os_str().to_str().unwrap())
         .unwrap();
     let file = File {
-      local,
+      maybe_local: Some(local),
       maybe_types: None,
       media_type: MediaType::TypeScript,
       source: "some source code".to_string(),
