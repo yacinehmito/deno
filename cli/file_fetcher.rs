@@ -27,6 +27,33 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::sync::Mutex;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Scheme {
+  File,
+  Http,
+  Https,
+}
+
+impl Scheme {
+  fn from_str(str: &str) -> Option<Scheme> {
+    match str {
+      "https" => Some(Scheme::Https),
+      "http" => Some(Scheme::Http),
+      "file" => Some(Scheme::File),
+      _ => None,
+    }
+  }
+
+  #[cfg(test)]
+  fn as_str(&self) -> &'static str {
+    match *self {
+      Scheme::Https => "https",
+      Scheme::Http => "http",
+      Scheme::File => "file",
+    }
+  }
+}
+
 pub const SUPPORTED_SCHEMES: [&str; 3] = ["http", "https", "file"];
 
 /// A structure representing a source file.
@@ -146,17 +173,17 @@ pub fn get_source_from_bytes(
 }
 
 /// Return a validated scheme for a given module specifier.
-fn get_validated_scheme(
+pub fn get_validated_scheme(
   specifier: &ModuleSpecifier,
-) -> Result<String, AnyError> {
-  let scheme = specifier.as_url().scheme();
-  if !SUPPORTED_SCHEMES.contains(&scheme) {
+) -> Result<Scheme, AnyError> {
+  let scheme_str = specifier.as_url().scheme();
+  if let Some(scheme) = Scheme::from_str(scheme_str) {
+    Ok(scheme)
+  } else {
     Err(generic_error(format!(
       "Unsupported scheme \"{}\" for module \"{}\". Supported schemes: {:#?}",
-      scheme, specifier, SUPPORTED_SCHEMES
+      scheme_str, specifier, SUPPORTED_SCHEMES,
     )))
-  } else {
-    Ok(scheme.to_string())
   }
 }
 
@@ -451,24 +478,26 @@ impl FileFetcher {
     if let Some(file) = self.cache.get(specifier) {
       Ok(file)
     } else {
-      let is_local = scheme == "file";
-      if is_local {
-        fetch_local(specifier)
-      } else if !self.allow_remote {
-        Err(custom_error(
-          "NoRemote",
-          format!("A remote specifier was requested: \"{}\", but --no-remote is specified.", specifier),
-        ))
-      } else {
-        let result = self.fetch_remote(specifier, permissions, 10).await;
-        // only cache remote resources, as they are the only things that would
-        // be "expensive" to fetch multiple times during an invocation, and it
-        // also allows local file sources to be changed, enabling things like
-        // dynamic import and workers to be updated while Deno is running.
-        if let Ok(file) = &result {
-          self.cache.insert(specifier.clone(), file.clone());
+      match scheme {
+        Scheme::File => fetch_local(specifier),
+        Scheme::Http | Scheme::Https => {
+          if !self.allow_remote {
+            Err(custom_error(
+              "NoRemote",
+              format!("A remote specifier was requested: \"{}\", but --no-remote is specified.", specifier)
+            ))
+          } else {
+            let result = self.fetch_remote(specifier, permissions, 10).await;
+            // only cache remote resources, as they are the only things that would
+            // be "expensive" to fetch multiple times during an invocation, and it
+            // also allows local file sources to be changed, enabling things like
+            // dynamic import and workers to be updated while Deno is running.
+            if let Ok(file) = &result {
+              self.cache.insert(specifier.clone(), file.clone());
+            }
+            result
+          }
         }
-        result
       }
     }
   }
@@ -582,22 +611,29 @@ mod tests {
   }
 
   #[test]
+  fn test_supported_schemes() {
+    for scheme_str in SUPPORTED_SCHEMES.iter() {
+      assert_eq!(*scheme_str, Scheme::from_str(scheme_str).unwrap().as_str())
+    }
+  }
+
+  #[test]
   fn test_get_validated_scheme() {
     let fixtures = vec![
-      ("https://deno.land/x/mod.ts", true, "https"),
-      ("http://deno.land/x/mod.ts", true, "http"),
-      ("file:///a/b/c.ts", true, "file"),
-      ("file:///C:/a/b/c.ts", true, "file"),
-      ("ftp://a/b/c.ts", false, ""),
-      ("mailto:dino@deno.land", false, ""),
+      ("https://deno.land/x/mod.ts", Some(Scheme::Https)),
+      ("http://deno.land/x/mod.ts", Some(Scheme::Http)),
+      ("file:///a/b/c.ts", Some(Scheme::File)),
+      ("file:///C:/a/b/c.ts", Some(Scheme::File)),
+      ("ftp://a/b/c.ts", None),
+      ("mailto:dino@deno.land", None),
     ];
 
-    for (specifier, is_ok, expected) in fixtures {
+    for (specifier, expected) in fixtures {
       let specifier = ModuleSpecifier::resolve_url_or_path(specifier).unwrap();
       let actual = get_validated_scheme(&specifier);
-      assert_eq!(actual.is_ok(), is_ok);
-      if is_ok {
-        assert_eq!(actual.unwrap(), expected);
+      assert_eq!(actual.is_ok(), expected.is_some());
+      if let Some(scheme) = expected {
+        assert_eq!(actual.unwrap(), scheme);
       }
     }
   }

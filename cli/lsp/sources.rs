@@ -4,8 +4,9 @@ use super::analysis;
 use super::text;
 
 use crate::file_fetcher::get_source_from_bytes;
+use crate::file_fetcher::get_validated_scheme;
 use crate::file_fetcher::map_content_type;
-use crate::file_fetcher::SUPPORTED_SCHEMES;
+use crate::file_fetcher::Scheme;
 use crate::http_cache;
 use crate::http_cache::HttpCache;
 use crate::import_map::ImportMap;
@@ -298,24 +299,21 @@ impl Sources {
     &mut self,
     specifier: &ModuleSpecifier,
   ) -> Option<ModuleSpecifier> {
-    let scheme = specifier.as_url().scheme();
-    if !SUPPORTED_SCHEMES.contains(&scheme) {
-      return None;
-    }
-
-    if scheme == "file" {
-      if let Ok(path) = specifier.as_url().to_file_path() {
-        if path.is_file() {
+    if let Ok(scheme) = get_validated_scheme(specifier) {
+      if scheme == Scheme::File {
+        if let Ok(path) = specifier.as_url().to_file_path() {
+          if path.is_file() {
+            return Some(specifier.clone());
+          }
+        }
+      } else {
+        if let Some(specifier) = self.redirects.get(specifier) {
           return Some(specifier.clone());
         }
-      }
-    } else {
-      if let Some(specifier) = self.redirects.get(specifier) {
-        return Some(specifier.clone());
-      }
-      if let Some(redirect) = self.resolve_remote_specifier(specifier, 10) {
-        self.redirects.insert(specifier.clone(), redirect.clone());
-        return Some(redirect);
+        if let Some(redirect) = self.resolve_remote_specifier(specifier, 10) {
+          self.redirects.insert(specifier.clone(), redirect.clone());
+          return Some(redirect);
+        }
       }
     }
     None
