@@ -580,11 +580,14 @@ impl Permissions {
     specifier: &ModuleSpecifier,
   ) -> Result<(), AnyError> {
     let url = specifier.as_url();
-    if url.scheme() == "file" {
-      let path = url.to_file_path().unwrap();
-      self.check_read(&path)
-    } else {
-      self.check_net_url(url)
+    // TODO: Rely on file_fetcher's Scheme if appropriate
+    match url.scheme() {
+      "data" => Ok(()),
+      "file" => {
+        let path = url.to_file_path().unwrap();
+        self.check_read(&path)
+      }
+      _ => self.check_net_url(url),
     }
   }
 

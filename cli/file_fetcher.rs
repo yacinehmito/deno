@@ -18,6 +18,7 @@ use deno_core::futures;
 use deno_core::futures::future::FutureExt;
 use deno_core::ModuleSpecifier;
 use deno_runtime::deno_fetch::reqwest;
+use regex::Regex;
 use std::collections::HashMap;
 use std::fs;
 use std::future::Future;
@@ -29,6 +30,7 @@ use std::sync::Mutex;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Scheme {
+  Data,
   File,
   Http,
   Https,
@@ -40,6 +42,7 @@ impl Scheme {
       "https" => Some(Scheme::Https),
       "http" => Some(Scheme::Http),
       "file" => Some(Scheme::File),
+      "data" => Some(Scheme::Data),
       _ => None,
     }
   }
@@ -50,11 +53,12 @@ impl Scheme {
       Scheme::Https => "https",
       Scheme::Http => "http",
       Scheme::File => "file",
+      Scheme::Data => "data",
     }
   }
 }
 
-pub const SUPPORTED_SCHEMES: [&str; 3] = ["http", "https", "file"];
+pub const SUPPORTED_SCHEMES: [&str; 4] = ["http", "https", "file", "data"];
 
 /// A structure representing a source file.
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -155,6 +159,47 @@ fn fetch_local(specifier: &ModuleSpecifier) -> Result<File, AnyError> {
     source,
     specifier: specifier.clone(),
   })
+}
+
+lazy_static! {
+  // Defined in IETF's RFC2397
+  // https://tools.ietf.org/html/rfc2397#section-3
+  static ref DATA_URL_RE: Regex = Regex::new(
+    r"(?i)^data:(?P<mediatype>[a-z]+/[a-z0-9-+.]+(;[a-z0-9-.!#$%*+.{}|~`]+=[a-z0-9-.!#$%*+.{}()|~`]+)*)?(?P<base64>;base64)?,(?P<data>[a-z0-9!$&',()*+;=\-._~:@/?%\s]*?)$",
+  ).unwrap();
+}
+
+fn decode_source(data: &str, in_base64: bool) -> Result<String, AnyError> {
+  if in_base64 {
+    let buf = &base64::decode(data)?;
+    return Ok(String::from(std::str::from_utf8(buf)?));
+  }
+  Ok(String::from(data))
+}
+
+/// Fetch from the specifier itself
+fn fetch_data(specifier: &ModuleSpecifier) -> Result<File, AnyError> {
+  if let Some(captures) = DATA_URL_RE.captures(specifier.as_str()) {
+    let mut media_type = MediaType::Unknown;
+    if let Some(data) = captures.name("data") {
+      if let Some(_mime) = captures.name("mediatype") {
+        media_type = MediaType::TypeScript;
+      }
+      let in_base64 = captures.name("base64").is_some();
+      let source = decode_source(data.as_str(), in_base64)?;
+      return Ok(File {
+        maybe_local: None,
+        maybe_types: None,
+        media_type,
+        source,
+        specifier: specifier.clone(),
+      });
+    }
+  }
+  Err(generic_error(format!(
+    "URL \"{}\" could not be parsed as a data URL",
+    specifier.as_str()
+  )))
 }
 
 /// Given a vector of bytes and optionally a charset, decode the bytes to a
@@ -498,6 +543,7 @@ impl FileFetcher {
             result
           }
         }
+        Scheme::Data => fetch_data(specifier),
       }
     }
   }
@@ -567,6 +613,7 @@ mod tests {
     let result = file_fetcher
       .fetch(specifier, &Permissions::allow_all())
       .await;
+    println!("{:#?}", result);
     assert!(result.is_ok());
     (result.unwrap(), file_fetcher)
   }
@@ -624,6 +671,7 @@ mod tests {
       ("http://deno.land/x/mod.ts", Some(Scheme::Http)),
       ("file:///a/b/c.ts", Some(Scheme::File)),
       ("file:///C:/a/b/c.ts", Some(Scheme::File)),
+      ("data:application/typescript;base64,Y29uc29sZS5sb2coJ0hlbGxvIHdvcmxkJyk=", Some(Scheme::Data)),
       ("ftp://a/b/c.ts", None),
       ("mailto:dino@deno.land", None),
     ];
@@ -1412,6 +1460,20 @@ mod tests {
       file.maybe_types,
       Some("./xTypeScriptTypes.d.ts".to_string())
     );
+  }
+
+  #[tokio::test]
+  async fn test_fetch_data() {
+    let specifier = ModuleSpecifier::resolve_url_or_path(
+      "data:application/typescript;base64,Y29uc29sZS5sb2coJ0hlbGxvIHdvcmxkJyk=",
+    )
+    .unwrap();
+    let (file, _) = test_fetch(&specifier).await;
+    assert!(file.maybe_local.is_none());
+    assert!(file.maybe_types.is_none());
+    assert_eq!(file.media_type, MediaType::TypeScript);
+    assert_eq!(file.source, "console.log('Hello world')");
+    assert_eq!(file.specifier, specifier);
   }
 
   #[tokio::test]
