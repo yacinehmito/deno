@@ -3419,6 +3419,12 @@ itest!(import_data_url_imports {
   http_server: true,
 });
 
+itest!(import_data_url_import_remote {
+  args: "run --quiet --reload import_data_url_import_remote.ts",
+  output: "import_data_url_import_remote.ts.out",
+  http_server: true,
+});
+
 itest!(import_data_url {
   args: "run --quiet --reload import_data_url.ts",
   output: "import_data_url.ts.out",
